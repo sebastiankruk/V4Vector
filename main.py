@@ -139,31 +139,35 @@ class V4Vector(object):
     return say_text
 
 
+  def _on_robot_observed_face(self, robot, event_type, event, evt):
+    '''
+    Event handler for when Vector sees face
+    '''
+    print(f"Vector sees a face {datetime.datetime.now()} {event_type}")
+    faces = [ face for face in robot.world.visible_faces ]
+
+    for face in faces:
+      face_name = face.name if face.name is not '' else V4Vector.RANDOM_CITIZEN
+
+      if face_name not in self.detected_faces:
+        try:
+          self.detected_faces.add(face_name)
+          jira_tickets = self.jira.check_tickets_for_user(face.name, face.time_since_last_seen) 
+          say_text = self.__get_text_to_say(face, face_name, jira_tickets)
+          robot.behavior.say_text(say_text)
+
+          for idx, ticket in enumerate(jira_tickets['issues']):
+            robot.behavior.say_text(f"Issue number {idx+1}: {ticket['summary']}")
+
+        except:
+          print(sys.exc_info()[0])
+          print(traceback.format_exc())
+      else:
+        print(face_name)
+
+
   def run(self):
       self.detected_faces = set()
-
-      def on_robot_observed_face(robot, event_type, event, evt):
-        print(f"Vector sees a face {datetime.datetime.now()} {event_type}")
-        faces = [ face for face in robot.world.visible_faces ]
-
-        for face in faces:
-          face_name = face.name if face.name is not '' else V4Vector.RANDOM_CITIZEN
-
-          if face_name not in self.detected_faces:
-            try:
-              self.detected_faces.add(face_name)
-              jira_tickets = self.jira.check_tickets_for_user(face.name, face.time_since_last_seen) 
-              say_text = self.__get_text_to_say(face, face_name, jira_tickets)
-              robot.behavior.say_text(say_text)
-
-              for idx, ticket in enumerate(jira_tickets['issues']):
-                robot.behavior.say_text(f"Issue number {idx+1}: {ticket['summary']}")
-
-            except:
-              print(sys.exc_info()[0])
-              print(traceback.format_exc())
-          else:
-            print(face_name)
 
       with anki_vector.Robot(enable_face_detection=True) as robot:
         self.robot = robot
@@ -173,11 +177,10 @@ class V4Vector(object):
         robot.behavior.set_lift_height(0.0)
 
         evt = threading.Event()
-        robot.events.subscribe(on_robot_observed_face, Events.robot_observed_face, evt)
+        robot.events.subscribe(self._on_robot_observed_face, Events.robot_observed_face, evt)
+        threading.Timer(20, self.__find_faces).start()
 
         print("------ waiting for face events, press ctrl+c to exit early ------")
-        
-        threading.Timer(20, self.__find_faces).start ()
 
         try:
           if not evt.wait(timeout=12000):
@@ -185,7 +188,7 @@ class V4Vector(object):
         except KeyboardInterrupt:
           pass
 
-        robot.events.unsubscribe(on_robot_observed_face, Events.robot_observed_face)
+        robot.events.unsubscribe(self._on_robot_observed_face, Events.robot_observed_face)
 
 
 
