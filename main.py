@@ -22,12 +22,14 @@ import sys
 import getopt
 import threading
 import datetime
+import inflect
 
 import anki_vector
 from anki_vector.events import Events
 from anki_vector.util import degrees
 from anki_vector.faces import Expression
 
+from jira import JiraChecker
 
 class V4Vector(object):
     
@@ -36,6 +38,8 @@ class V4Vector(object):
     Initializing main class
     '''
     self.vector = vector
+    self.jira = JiraChecker()
+    self.inflect_engine = inflect.engine()
 
     print("Initialized")
     
@@ -61,18 +65,32 @@ class V4Vector(object):
 
               try:
                 if face.expression is Expression.HAPPINESS.value:
-                  emotion = 'happy'
+                  emotion = 'are happy'
                 elif face.expression is Expression.ANGER.value:
-                  emotion = 'angry'
+                  emotion = 'are angry'
                 elif face.expression is Expression.SADNESS.value:
-                  emotion = 'sad'
+                  emotion = 'are sad'
                 elif face.expression is Expression.SURPRISE.value:
-                  emotion = 'surprised'  
+                  emotion = 'are surprised'  
                 else:
                   emotion = ''
 
-                robot.behavior.say_text(f"I see you are {emotion}, {face.name}!")
+                face_name = face.name if face.name is not '' else 'Random citizen'
+
+                robot.behavior.say_text(f"I see you {emotion}, {face_name}!")
                 self.detected_faces.add(face.name)
+
+                if face.name is not '':
+                  jira_tickets = self.jira.check_tickets_for_user(face.name, face.time_since_last_seen)
+                  jira_tickets_total = jira_tickets['total']
+                  if jira_tickets_total < 1:
+                    robot.behavior.say_text(f"You have no new jira tickets")
+                  else:
+                    robot.behavior.say_text(f"You have {jira_tickets_total} jira { self.inflect_engine.plural('ticket', jira_tickets_total) }")
+
+                  for ticket in jira_tickets['issues']:
+                    robot.behavior.say_text(f"{ticket['summary']}")
+
                 # self.said_text = True
                 # print(f"Face: {face.name}, {face.expression}")
               except Exception as e:
@@ -96,7 +114,7 @@ class V4Vector(object):
         print("------ waiting for face events, press ctrl+c to exit early ------")
 
         try:
-          if not evt.wait(timeout=60):
+          if not evt.wait(): #timeout=60):
             print("------ Vector never saw your face! ------")
         except KeyboardInterrupt:
           pass
@@ -138,6 +156,7 @@ def main(argv=None):
 
     v = V4Vector(vector)
     v.run()
+    
   
   except Usage as err:
     print >> sys.stderr, sys.argv[0].split("/")[-1] + ": " + str(err.msg)
