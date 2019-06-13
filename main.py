@@ -37,6 +37,9 @@ from anki_vector.behavior import MIN_HEAD_ANGLE, MAX_HEAD_ANGLE
 from jira import JiraChecker
 
 class V4Vector(object):
+
+  RANDOM_CITIZEN = 'Random citizen'
+  RANDOM_CITIZEN_SET = set({RANDOM_CITIZEN})
     
   def __init__(self, vector=None):
     '''
@@ -57,15 +60,16 @@ class V4Vector(object):
 
     print(f"------ Vector will look for faces {actions}! ------")
 
-    if 'head' in actions:
-      robot.behavior.set_head_angle(degrees(random.randint(0, 45)))
-    if 'drive' in actions:
-      robot.behavior.drive_straight(distance_mm(random.randint(50, 100)), speed_mmps(100))
-    if 'turn' in actions:
-      robot.behavior.drive_off_charger()
-      robot.behavior.turn_in_place(degrees(random.randint(-90, 90)))
-    #find_faces
-    #look_around_in_place
+    while actions:
+      if 'head' in actions:
+        robot.behavior.set_head_angle(degrees(random.randint(0, 45)))
+      if 'drive' in actions:
+        robot.behavior.drive_straight(distance_mm(random.randint(50, 100)), speed_mmps(100))
+      if 'turn' in actions:
+        robot.behavior.drive_off_charger()
+        robot.behavior.turn_in_place(degrees(random.randint(-90, 90)))
+      #find_faces
+      #look_around_in_place
     
 
   def run(self):
@@ -85,7 +89,6 @@ class V4Vector(object):
           for face in faces:
 
             if not face.name in self.detected_faces:
-              print("Face!")
 
               try:
                 if face.expression is Expression.HAPPINESS.value:
@@ -99,9 +102,10 @@ class V4Vector(object):
                 else:
                   emotion = ''
 
-                face_name = face.name if face.name is not '' else 'Random citizen'
-
-                robot.behavior.say_text(f"I see you {emotion}, {face_name}!")
+                face_name = face.name if face.name is not '' else RANDOM_CITIZEN
+                face_message = f"I see you {emotion}, {face_name}!"
+                print(face_memessage)
+                robot.behavior.say_text(face_memessage)
                 self.detected_faces.add(face_name)
 
                 if face.name is not '':
@@ -132,17 +136,24 @@ class V4Vector(object):
 
 
         evt = threading.Event()
-        # robot.events.subscribe(on_robot_observed_face, Events.robot_changed_observed_face_id, evt)
         robot.events.subscribe(on_robot_observed_face, Events.robot_observed_face, evt)
+
+        # + wake_word
+        # + user_intent => https://sdk-resources.anki.com/vector/docs/generated/anki_vector.user_intent.html
 
         print("------ waiting for face events, press ctrl+c to exit early ------")
 
         try:
+          timeout = 15
+
           while True:
-            if not evt.wait(timeout=15):
-              # robot.behavior.find_faces()
+            if not evt.wait(timeout=timeout):
               self.__find_faces(robot)
               self.detected_faces.clear()
+
+            found_faces = len(self.detected_faces-RANDOM_CITIZEN_SET)
+            timeout = 60 if found_faces else 10
+
         except KeyboardInterrupt:
           pass
 
