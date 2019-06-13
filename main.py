@@ -20,7 +20,6 @@ Created by Sebastian Kruk and Michał Szopiński
 
 import sys
 import time
-import sched
 import getopt
 import threading
 import datetime
@@ -51,10 +50,7 @@ class V4Vector(object):
     self.vector = vector
     self.jira = JiraChecker()
     self.inflect_engine = inflect.engine()
-    self.scheduler = sched.scheduler(time.time, time.sleep)
     self.robot = None
-
-    self.scheduler.enter(30, 1, self.__find_faces)
 
     print("Initialized")
 
@@ -62,24 +58,25 @@ class V4Vector(object):
     '''
     Extended version of the find faces algoritm
     '''
-    # found_faces = len(self.detected_faces-V4Vector.RANDOM_CITIZEN_SET)
-    # timeout = 60 if found_faces > 0 else 30
-    actions = random.choices(('head', 'turn'), k=random.randint(1,3)) #'drive', 
-    print(f"------ Vector will look for faces {actions}! ------")
+    found_faces = len(self.detected_faces-V4Vector.RANDOM_CITIZEN_SET)
+    timeout = 20 if found_faces > 0 else 10
+
     self.detected_faces.clear()
     self.robot.behavior.drive_off_charger()
 
-    while actions:
-      action = actions.pop()
-      if 'head' in action:
-        self.robot.behavior.set_head_angle(degrees(random.randint(40, 45)))
-      if 'drive' in action:
-        self.robot.behavior.drive_straight(distance_mm(random.randint(-10, 10)), speed_mmps(100))
-      if 'turn' in action:
-        self.robot.behavior.turn_in_place(degrees(random.randint(25, 30)))
-      #find_faces
-      #look_around_in_place
-    
+    head_angle = random.randint(35, 45)
+    rotate_angle = random.randint(45, 90)
+
+    print(f"------ Vector will look for humans (rotate: {rotate_angle}, head: {head_angle}, timeout: {timeout})! ------")
+
+    self.robot.behavior.set_head_angle(degrees(head_angle))
+    self.robot.behavior.turn_in_place(degrees(rotate_angle))
+    # self.robot.behavior.drive_straight(distance_mm(random.randint(-10, 10)), speed_mmps(100))
+    #find_faces
+    #look_around_in_place
+
+    threading.Timer(timeout, self.__find_faces).start ()
+
 
   def run(self):
       self.detected_faces = set()
@@ -161,7 +158,7 @@ class V4Vector(object):
 
         print("------ waiting for face events, press ctrl+c to exit early ------")
         
-        self.scheduler.run()
+        threading.Timer(20, self.__find_faces).start ()
 
         try:
           if not evt.wait(timeout=12000):
