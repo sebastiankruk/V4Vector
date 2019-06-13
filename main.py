@@ -23,11 +23,16 @@ import getopt
 import threading
 import datetime
 import inflect
+import random
 
 import anki_vector
 from anki_vector.events import Events
 from anki_vector.util import degrees
 from anki_vector.faces import Expression
+from anki_vector.connection import ControlPriorityLevel
+from anki_vector.util import distance_mm, speed_mmps
+from anki_vector.util import degrees
+from anki_vector.behavior import MIN_HEAD_ANGLE, MAX_HEAD_ANGLE
 
 from jira import JiraChecker
 
@@ -42,6 +47,25 @@ class V4Vector(object):
     self.inflect_engine = inflect.engine()
 
     print("Initialized")
+
+
+  def __find_faces(self, robot):
+    '''
+    Extended version of the find faces algoritm
+    '''
+    actions = random.choices(('drive', 'head', 'turn'), k=random.randint(1,3))
+
+    print(f"------ Vector will look for faces {actions}! ------")
+
+    if 'head' in actions:
+      robot.behavior.set_head_angle(degrees(random.randint(0, 45)))
+    if 'drive' in actions:
+      robot.behavior.drive_straight(distance_mm(random.randint(50, 100)), speed_mmps(100))
+    if 'turn' in actions:
+      robot.behavior.drive_off_charger()
+      robot.behavior.turn_in_place(degrees(random.randint(-90, 90)))
+    #find_faces
+    #look_around_in_place
     
 
   def run(self):
@@ -52,7 +76,7 @@ class V4Vector(object):
         self.said_text
         if not self.said_text:
 
-          print(f"Vector sees a face {datetime.datetime.now()}")
+          # print(f"Vector sees a face {datetime.datetime.now()}")
 
           faces = list()
           for face in robot.world.visible_faces:
@@ -78,7 +102,7 @@ class V4Vector(object):
                 face_name = face.name if face.name is not '' else 'Random citizen'
 
                 robot.behavior.say_text(f"I see you {emotion}, {face_name}!")
-                self.detected_faces.add(face.name)
+                self.detected_faces.add(face_name)
 
                 if face.name is not '':
                   jira_tickets = self.jira.check_tickets_for_user(face.name, face.time_since_last_seen)
@@ -98,7 +122,7 @@ class V4Vector(object):
 
           # evt.set()
 
-      with anki_vector.Robot(enable_face_detection=True) as robot:
+      with anki_vector.Robot(enable_face_detection=True, behavior_control_level=ControlPriorityLevel.OVERRIDE_BEHAVIORS_PRIORITY) as robot:
         robot.vision.enable_face_detection(estimate_expression=True)
         robot.vision.enable_display_camera_feed_on_face()
 
@@ -114,8 +138,11 @@ class V4Vector(object):
         print("------ waiting for face events, press ctrl+c to exit early ------")
 
         try:
-          if not evt.wait(): #timeout=60):
-            print("------ Vector never saw your face! ------")
+          while True:
+            if not evt.wait(timeout=15):
+              # robot.behavior.find_faces()
+              self.__find_faces(robot)
+              self.detected_faces.clear()
         except KeyboardInterrupt:
           pass
 
