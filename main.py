@@ -54,12 +54,16 @@ class V4Vector(object):
 
     print("Initialized")
 
+
   def __find_faces(self):
     '''
     Extended version of the find faces algoritm
     '''
     found_faces = len(self.detected_faces-V4Vector.RANDOM_CITIZEN_SET)
-    timeout = 20 if found_faces > 0 else 10
+    timeout = 10 if found_faces is 0 else 20
+
+    if len(self.detected_faces) is 0:
+      self.robot.behavior.say_text('Is there anyone here? Hello?', duration_scalar=1.5)
 
     self.detected_faces.clear()
     self.robot.behavior.drive_off_charger()
@@ -72,10 +76,67 @@ class V4Vector(object):
     self.robot.behavior.set_head_angle(degrees(head_angle))
     self.robot.behavior.turn_in_place(degrees(rotate_angle))
     # self.robot.behavior.drive_straight(distance_mm(random.randint(-10, 10)), speed_mmps(100))
-    #find_faces
-    #look_around_in_place
+
 
     threading.Timer(timeout, self.__find_faces).start ()
+
+
+  def __get_emotions(self, face):
+    '''
+    Parses face emotions into (emotion, positive) tuple
+    '''
+    if face.expression is Expression.HAPPINESS.value:
+      emotion = 'happy'
+      positive_emotion = True
+    elif face.expression is Expression.SURPRISE.value:
+      emotion = 'surprised'  
+      positive_emotion = True
+    elif face.expression is Expression.ANGER.value:
+      emotion = 'angry'
+      positive_emotion = False
+    elif face.expression is Expression.SADNESS.value:
+      emotion = 'sad'
+      positive_emotion = False
+    else:
+      emotion = ''
+      positive_emotion = None
+
+    return emotion, positive_emotion
+
+
+  def __get_text_to_say(self, face, face_name, jira_tickets):
+    '''
+    Generates text to be said
+    '''
+    emotion, positive_emotion = self.__get_emotions(face)
+
+    if face.name is not '':
+
+      jira_tickets_total = jira_tickets['total']
+
+      if jira_tickets_total < 1:
+        if positive_emotion is True:
+          joiner = f', is that why you are {emotion}?'
+        elif positive_emotion is False:
+          joiner = f', so why are you {emotion}?'
+        else:
+          joiner = '!'
+        say_text = f"{face_name}, you have no new jira tickets{joiner}"
+
+      else:
+        if positive_emotion is False:
+          joiner = f', is that why you are {emotion}?'
+        elif positive_emotion is True:
+          joiner = f', so why are you {emotion}?'
+        else:
+          joiner = '!'
+
+        say_text = f"{face_name}, you have {jira_tickets_total} jira { self.inflect_engine.plural('ticket', jira_tickets_total) }{joiner}"
+
+    else:
+      say_text = f"I see you {emotion}, {face_name}!"
+
+    return say_text
 
 
   def run(self):
@@ -83,68 +144,26 @@ class V4Vector(object):
 
       def on_robot_observed_face(robot, event_type, event, evt):
         print(f"Vector sees a face {datetime.datetime.now()} {event_type}")
-
-        faces = list()
-        for face in robot.world.visible_faces:
-          faces.append(face)
+        faces = [ face for face in robot.world.visible_faces ]
 
         for face in faces:
-
           face_name = face.name if face.name is not '' else V4Vector.RANDOM_CITIZEN
 
           if face_name not in self.detected_faces:
             try:
-              if face.expression is Expression.HAPPINESS.value:
-                emotion = 'happy'
-                positive_emotion = True
-              elif face.expression is Expression.SURPRISE.value:
-                emotion = 'surprised'  
-                positive_emotion = True
-              elif face.expression is Expression.ANGER.value:
-                emotion = 'angry'
-                positive_emotion = False
-              elif face.expression is Expression.SADNESS.value:
-                emotion = 'sad'
-                positive_emotion = False
-              else:
-                emotion = ''
-                positive_emotion = None
-
-              # face_message = f"I see you {emotion}, {face_name}!"
-              # robot.behavior.say_text(face_message)
               self.detected_faces.add(face_name)
+              jira_tickets = self.jira.check_tickets_for_user(face.name, face.time_since_last_seen) 
+              say_text = self.__get_text_to_say(face, face_name, jira_tickets)
+              robot.behavior.say_text(say_text)
 
-              if face.name is not '':
-                jira_tickets = self.jira.check_tickets_for_user(face.name, face.time_since_last_seen)
-                jira_tickets_total = jira_tickets['total']
-                if jira_tickets_total < 1:
-                  if positive_emotion is True:
-                    joiner = f', is that why you are {emotion}?'
-                  elif positive_emotion is False:
-                    joiner = f', so why are you {emotion}?'
-                  else:
-                    joiner = '!'
-                  robot.behavior.say_text(f"{face_name}, you have no new jira tickets{joiner}")
-                else:
-                  if positive_emotion is False:
-                    joiner = f', is that why you are {emotion}?'
-                  elif positive_emotion is True:
-                    joiner = f', so why are you {emotion}?'
-                  else:
-                    joiner = '!'
-                  robot.behavior.say_text(f"{face_name}, you have {jira_tickets_total} jira { self.inflect_engine.plural('ticket', jira_tickets_total) }{joiner}")
-
-                for idx, ticket in enumerate(jira_tickets['issues']):
-                  robot.behavior.say_text(f"Issue number {idx}: {ticket['summary']}")
+              for idx, ticket in enumerate(jira_tickets['issues']):
+                robot.behavior.say_text(f"Issue number {idx+1}: {ticket['summary']}")
 
             except:
+              print(sys.exc_info()[0])
               print(traceback.format_exc())
-              e = sys.exc_info()[0]
-              print("Exception in handling face detection")
-              print(e)
           else:
             print(face_name)
-        # evt.set()
 
       with anki_vector.Robot(enable_face_detection=True) as robot:
         self.robot = robot
