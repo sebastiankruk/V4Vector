@@ -27,6 +27,8 @@ import inflect
 import random
 import traceback
 
+from datetime import datetime
+
 import anki_vector
 from anki_vector.events import Events
 from anki_vector.util import degrees
@@ -42,6 +44,13 @@ class V4Vector(object):
 
   RANDOM_CITIZEN = 'Random citizen'
   RANDOM_CITIZEN_SET = set({RANDOM_CITIZEN})
+
+  ANYONE_HERE = set({
+    'Is there anyone here?',
+    'Hello?',
+    "I'm lonely ...",
+    'Where is everyone?'
+  })
     
   def __init__(self, vector=None):
     '''
@@ -51,6 +60,10 @@ class V4Vector(object):
     self.jira = JiraChecker()
     self.inflect_engine = inflect.engine()
     self.robot = None
+    self.rotation = 0
+    self.last_seen_human_rotation = dict()
+    self.last_seen_human = dict()
+    self.can_rotate = True
 
     print("Initialized")
 
@@ -59,26 +72,84 @@ class V4Vector(object):
     '''
     Extended version of the find faces algoritm
     '''
-    found_faces = len(self.detected_faces-V4Vector.RANDOM_CITIZEN_SET)
-    timeout = 10 if found_faces is 0 else 20
+    timeout = 10
+    if self.can_rotate:
+      if len(self.detected_faces) is 0:
+        self.robot.behavior.say_text(random.choice(list(V4Vector.ANYONE_HERE)), duration_scalar=1.5)
 
-    if len(self.detected_faces) is 0:
-      self.robot.behavior.say_text('Is there anyone here? Hello?', duration_scalar=1.5)
+      self.__clean_up_detected_faces()
+      self.robot.behavior.drive_off_charger()
 
-    self.detected_faces.clear()
-    self.robot.behavior.drive_off_charger()
+      head_angle = random.randint(35, 45)
+      rotate_angle = random.randint(30, 90)
 
-    head_angle = random.randint(35, 45)
-    rotate_angle = random.randint(45, 90)
+      self.rotation += rotate_angle
+      self.rotation %= 360
 
-    print(f"------ Vector will look for humans (rotate: {rotate_angle}, head: {head_angle}, timeout: {timeout})! ------")
+      print(f"------ Vector will look for humans (rotation: {self.rotation}, rotate: {rotate_angle}, head: {head_angle}, timeout: {timeout})! ------")
 
-    self.robot.behavior.set_head_angle(degrees(head_angle))
-    self.robot.behavior.turn_in_place(degrees(rotate_angle))
-    # self.robot.behavior.drive_straight(distance_mm(random.randint(-10, 10)), speed_mmps(100))
+      self.robot.behavior.set_head_angle(degrees(head_angle))
+      self.robot.behavior.turn_in_place(degrees(rotate_angle), angle_tolerance=degrees(0))
+      # self.robot.behavior.drive_straight(distance_mm(random.randint(-10, 10)), speed_mmps(100))
+
+    threading.Timer(timeout, self.__find_faces).start()
 
 
-    threading.Timer(timeout, self.__find_faces).start ()
+  def __clean_up_detected_faces(self):
+    '''
+    Call to ensure that we can talk to the human again
+    '''
+    now = datetime.now()
+
+    self.detected_faces = set([
+      user_name 
+      for user_name in self.detected_faces
+      if (now - self.last_seen_human.get(user_name, now)).seconds < 60
+    ])
+
+
+  def __find_jira_tickets(self):
+    '''
+    Will periodically check for new jira tickets
+    '''
+    new_jira_tickets = self.jira.check_for_new_jira_tickets(self.last_seen_human)
+
+    if new_jira_tickets['total'] > 0:
+      users_with_tickets = set([
+        self.jira.get_user_name(issue['assignee'])
+        for issue in new_jira_tickets['issues']
+      ])
+
+      print(f"found users with tickets {users_with_tickets}")
+
+      for user in users_with_tickets:
+        self.last_seen_human[user] = datetime.now()
+
+        rotations = self.last_seen_human_rotation.get(user, [])
+        if rotations:
+          rotate_angle = rotations[0] - self.rotation
+
+          print(f'Rotations: {rotate_angle}, {self.rotation}, {rotations}')
+
+          tickets_for_user = [
+            issue['summary'] 
+            for issue
+            in new_jira_tickets['issues']
+            if self.jira.get_user_name(issue['assignee']) is user
+          ]
+
+          tickets_count = len(tickets_for_user)
+
+          self.robot.behavior.say_text(f'I\'m looking for {user}, you have {tickets_count} new jira { self.inflect_engine.plural("ticket", tickets_count) }')
+
+          self.rotation = rotations[0]
+          self.robot.behavior.turn_in_place(degrees(rotate_angle), angle_tolerance=degrees(0))
+
+          for idx, ticket in enumerate(tickets_for_user):
+            self.robot.behavior.say_text(f"Issue number {idx+1}: {ticket}", duration_scalar=0.9, use_vector_voice=False)
+
+    threading.Timer(60, self.__find_jira_tickets).start()
+
 
 
   def __get_emotions(self, face):
@@ -143,8 +214,10 @@ class V4Vector(object):
     '''
     Event handler for when Vector sees face
     '''
-    print(f"Vector sees a face {datetime.datetime.now()} {event_type}")
+    self.can_rotate = False
+
     faces = [ face for face in robot.world.visible_faces ]
+    print(f"Vector sees faces: {faces}, {datetime.now()} {event_type}")
 
     for face in faces:
       face_name = face.name if face.name is not '' else V4Vector.RANDOM_CITIZEN
@@ -152,18 +225,22 @@ class V4Vector(object):
       if face_name not in self.detected_faces:
         try:
           self.detected_faces.add(face_name)
+          self.last_seen_human_rotation[face_name] = self.last_seen_human_rotation.get(face_name, []) + [self.rotation]
+          self.last_seen_human[face_name] = datetime.now()
           jira_tickets = self.jira.check_tickets_for_user(face.name, face.time_since_last_seen) 
           say_text = self.__get_text_to_say(face, face_name, jira_tickets)
-          robot.behavior.say_text(say_text)
+          robot.behavior.say_text(say_text, use_vector_voice=False)
 
           for idx, ticket in enumerate(jira_tickets['issues']):
-            robot.behavior.say_text(f"Issue number {idx+1}: {ticket['summary']}")
+            robot.behavior.say_text(f"Issue number {idx+1}: {ticket['summary']}", duration_scalar=0.9, use_vector_voice=False)
 
         except:
           print(sys.exc_info()[0])
           print(traceback.format_exc())
       else:
         print(face_name)
+
+    self.can_rotate = True
 
 
   def run(self):
@@ -178,7 +255,8 @@ class V4Vector(object):
 
         evt = threading.Event()
         robot.events.subscribe(self._on_robot_observed_face, Events.robot_observed_face, evt)
-        threading.Timer(20, self.__find_faces).start()
+        threading.Timer(10, self.__find_faces).start()
+        threading.Timer(60, self.__find_jira_tickets).start()
 
         print("------ waiting for face events, press ctrl+c to exit early ------")
 

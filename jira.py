@@ -34,6 +34,13 @@ class JiraChecker:
     '''
     with open('jira-users.json') as jira_users_file:
       self.users = json.load(jira_users_file)
+
+    self.emails = {
+      value['email']: key
+      for key, value
+      in self.users.items()
+    }
+
     with open('jira-connection.json') as jira_connection_file:
       self.connection = json.load(jira_connection_file)
 
@@ -44,10 +51,14 @@ class JiraChecker:
         "fields": [
           "key",
           "summary",
-          "created"
+          "created",
+          "assignee"
         ]
     }
     self.jira_query_jql_template = '''issuetype in (Bug) AND assignee = "%s" AND status in (New)'''
+    self.jira_update_query_jql_template = '''issuetype in (Bug) AND status in (New) AND (%s) ORDER BY created ASC'''
+    self.jira_user_date_template = '''(assignee = "%s" AND updatedDate > "%s")'''
+
     self.jira_headers = {
       'Authorization': f'''Basic {self.connection['auth']}''',
       'Content-Type': 'application/json'
@@ -61,13 +72,18 @@ class JiraChecker:
     user = self.users.get(name, {'email': None})
     return user['email']
 
+  def get_user_name(self, email):
+    '''
+    Finds user name based on the given email
+    '''
+    return self.emails.get(email, None)
 
   def __cleanup_summary(self, summary):
     '''
     '''
     return re.sub(r'[.,/;:]', ' ', summary)
 
-  def __prepare_jira_response(self, response, new_since):
+  def __prepare_jira_response(self, response):
     '''
     Repackages response from jira
     '''
@@ -78,12 +94,35 @@ class JiraChecker:
       'issues': [
         {
           'summary': self.__cleanup_summary(issue['fields']['summary']),
-          'created': datetime.strptime(issue['fields']['created'], "%Y-%m-%dT%H:%M:%S.%f%z")
+          'created': datetime.strptime(issue['fields']['created'], "%Y-%m-%dT%H:%M:%S.%f%z"),
+          'assignee': issue['fields']['assignee']['name']
         }
         for issue in response_json['issues']
       ] 
     }
     return results
+
+  def _call_jira(self, jql=None):
+    '''
+    Helper method to call jira
+    '''
+    if jql:
+      jira_query = dict(self.jira_query_template)
+      jira_query['jql'] = jql
+      
+      s_jira_query = json.dumps(jira_query)
+
+      print(s_jira_query)
+      response = requests.post(self.jira_url, s_jira_query, headers=self.jira_headers)
+
+      if response.status_code is 200:
+        return self.__prepare_jira_response(response)
+
+    return {
+      'total': 0,
+      'issues':[]
+    }
+
 
 
   def check_tickets_for_user(self, name, new_since=None):
@@ -93,19 +132,25 @@ class JiraChecker:
     email = self.__get_user_email(name)
 
     if email is not None:
-      jira_query = dict(self.jira_query_template)
-      jira_query['jql'] = self.jira_query_jql_template % email
-
-      response = requests.post(self.jira_url, json.dumps(jira_query), headers=self.jira_headers)
-
-      if response.status_code is 200:
-        return self.__prepare_jira_response(response, new_since)
-
+      return self._call_jira(jql=self.jira_query_jql_template % email)
     else:
       print(f"Could not match user {name}")
 
-    return {
-      'total': 0,
-      'issues':[]
-    }
+    return self._call_jira()
+
+
   
+  def check_for_new_jira_tickets(self, last_seen_users):
+    '''
+    Will do a special call to Jira to get the list of user
+    '''
+    if last_seen_users:
+      jira_query_users = ' OR '.join([
+        self.jira_user_date_template % ( self.__get_user_email(user_name), last_seen.strftime('%Y-%m-%d %H:%M') )
+        for (user_name, last_seen) 
+        in last_seen_users.items()
+      ])
+      
+      return self._call_jira(jql=self.jira_update_query_jql_template % jira_query_users)
+
+    return self._call_jira()
